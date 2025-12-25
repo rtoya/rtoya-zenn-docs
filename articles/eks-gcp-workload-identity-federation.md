@@ -218,7 +218,33 @@ gcloud iam workload-identity-pools create-cred-config \
   --output-file=gcp-credentials.json
 ```
 
-**ConfigMapとして作成:**
+**EKS Pod Identity用ConfigMap（推奨）:**
+
+EKS Pod Identityを使用する場合、`credential_source`は最小限の設定で動作します。GCPクライアントライブラリが環境変数 `AWS_CONTAINER_CREDENTIALS_FULL_URI` を自動検出します。
+
+```yaml:gcp-wif-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: <APP_NAME>-gcp-wif-config
+data:
+  gcp-credentials.json: |
+    {
+      "type": "external_account",
+      "audience": "//iam.googleapis.com/projects/<GCP_PROJECT_NUMBER>/locations/global/workloadIdentityPools/aws-eks-pool-<ENV>/providers/aws-eks-provider",
+      "subject_token_type": "urn:ietf:params:aws:token-type:aws4_request",
+      "token_url": "https://sts.googleapis.com/v1/token",
+      "credential_source": {
+        "environment_id": "aws1",
+        "regional_cred_verification_url": "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15"
+      },
+      "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/<APP_NAME>@<GCP_PROJECT>.iam.gserviceaccount.com:generateAccessToken"
+    }
+```
+
+**IRSA用ConfigMap:**
+
+IRSAを使用する場合は、IMDSエンドポイントを明示的に指定します。
 
 ```yaml:gcp-wif-config.yaml
 apiVersion: v1
@@ -380,6 +406,156 @@ gcloud iam workload-identity-pools list --location=global --project=<GCP_PROJECT
 
 # K8s ConfigMap確認
 kubectl get configmap <APP_NAME>-gcp-wif-config -o yaml | grep audience
+```
+
+---
+
+## ローカル開発環境での認証
+
+EKS上ではWorkload Identity Federationを使用しますが、ローカル開発環境ではGCPユーザー認証（ADC: Application Default Credentials）を使用します。
+
+### ローカル環境のセットアップ
+
+```bash
+# GCPにログイン
+gcloud auth login
+
+# Application Default Credentialsを設定
+gcloud auth application-default login
+
+# プロジェクトを設定
+gcloud config set project <GCP_PROJECT>
+```
+
+これにより、`~/.config/gcloud/application_default_credentials.json` が作成されます。
+
+---
+
+## TypeScriptアプリでの認証制御
+
+GCPクライアントライブラリはADC（Application Default Credentials）を自動検出するため、環境ごとに異なる認証方法を透過的に扱えます。
+
+### 認証の自動検出フロー
+
+```
+1. 環境変数 GOOGLE_APPLICATION_CREDENTIALS が設定されている場合
+   → そのファイルパスの認証情報を使用（EKS: WIF credentials）
+
+2. gcloud auth application-default login で設定された認証情報がある場合
+   → ~/.config/gcloud/application_default_credentials.json を使用（ローカル）
+
+3. GCPメタデータサーバーが利用可能な場合
+   → インスタンスのサービスアカウントを使用（GCE/Cloud Run等）
+```
+
+### 実装例
+
+#### パッケージのインストール
+
+```bash
+npm install @google-cloud/aiplatform
+# または
+npm install @google-cloud/vertexai
+```
+
+#### 基本的な実装
+
+```typescript:src/gcp-client.ts
+import { VertexAI } from '@google-cloud/vertexai';
+
+// プロジェクトIDは環境変数から取得
+const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+if (!projectId) {
+  throw new Error('GOOGLE_CLOUD_PROJECT is required');
+}
+
+// クライアント初期化時に認証は自動で行われる
+// - ローカル: ADCを使用
+// - EKS: GOOGLE_APPLICATION_CREDENTIALS経由でWIFを使用
+const vertexAI = new VertexAI({
+  project: projectId,
+  location: 'us-central1',
+});
+
+export async function generateContent(prompt: string): Promise<string> {
+  const model = vertexAI.getGenerativeModel({
+    model: 'gemini-1.5-flash',
+  });
+
+  const result = await model.generateContent(prompt);
+  return result.response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+}
+```
+
+#### 認証状態の確認（デバッグ用）
+
+```typescript:src/check-auth.ts
+import { GoogleAuth } from 'google-auth-library';
+
+export async function checkGCPAuth(): Promise<void> {
+  const auth = new GoogleAuth({
+    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  });
+
+  try {
+    const client = await auth.getClient();
+    const projectId = await auth.getProjectId();
+
+    console.log('GCP Authentication successful');
+    console.log(`Project ID: ${projectId}`);
+    console.log(`Client type: ${client.constructor.name}`);
+  } catch (error) {
+    console.error('GCP Authentication failed:', error);
+    throw error;
+  }
+}
+```
+
+### 環境変数の設定
+
+| 環境 | GOOGLE_APPLICATION_CREDENTIALS | GOOGLE_CLOUD_PROJECT |
+|------|-------------------------------|---------------------|
+| ローカル | 未設定（ADCを使用） | 任意（gcloud configから自動取得も可） |
+| EKS | `/var/secrets/google/gcp-credentials.json` | `<GCP_PROJECT>` |
+
+#### ローカル環境（.env.local）
+
+```bash:.env.local
+# GOOGLE_APPLICATION_CREDENTIALS は設定しない（ADCを使用）
+GOOGLE_CLOUD_PROJECT=<GCP_PROJECT>
+```
+
+#### EKS環境
+
+Deployment で設定済み（Step 3.3参照）
+
+### 認証方式の判別
+
+デバッグ時に現在どの認証方式が使われているか確認したい場合：
+
+```typescript:src/auth-info.ts
+import { GoogleAuth } from 'google-auth-library';
+
+export async function getAuthInfo(): Promise<{
+  type: 'user' | 'service_account' | 'external_account' | 'unknown';
+  email?: string;
+}> {
+  const auth = new GoogleAuth();
+  const client = await auth.getClient();
+  const credentials = await client.getCredentials();
+
+  if ('client_email' in credentials && credentials.client_email) {
+    // サービスアカウントまたはWIF
+    const isWIF = process.env.GOOGLE_APPLICATION_CREDENTIALS?.includes('external_account');
+    return {
+      type: isWIF ? 'external_account' : 'service_account',
+      email: credentials.client_email,
+    };
+  }
+
+  // ユーザー認証（ADC）
+  return { type: 'user' };
+}
 ```
 
 ---
