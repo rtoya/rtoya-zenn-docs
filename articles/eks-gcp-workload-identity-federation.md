@@ -61,6 +61,7 @@ AWS EKSでPodにIAMロールを付与する方法は2つあります。
 ### 前提条件
 
 - AWS EKSクラスターが構築済み
+- EKS Pod Identity Agent アドオンがインストール済み
 - GCPプロジェクトが作成済み
 - Terraform / Terragrunt が使用可能
 
@@ -302,114 +303,6 @@ spec:
 
 ---
 
-## 設定の整合性確認
-
-設定完了後、各コンポーネントの整合性を確認します。
-
-### チェックリスト
-
-| 項目 | AWS | GCP | K8s |
-|------|-----|-----|-----|
-| ロール名 | `<APP_NAME>-sa-role-<ENV>` | WIF binding | - |
-| ServiceAccount | Pod Identity | WIF binding末尾 | sa.yaml |
-| Pool ID | - | `aws-eks-pool-<ENV>` | audience |
-| SA Email | - | service_account_bindings | impersonation_url |
-
-### 確認コマンド
-
-```bash
-# AWS: IAMロール確認
-aws iam get-role --role-name <APP_NAME>-sa-role-<ENV>
-
-# AWS: Pod Identity Association確認
-aws eks list-pod-identity-associations --cluster-name <EKS_CLUSTER_NAME>
-
-# GCP: WIF設定確認
-gcloud iam workload-identity-pools providers describe aws-eks-provider \
-  --workload-identity-pool=aws-eks-pool-<ENV> \
-  --location=global \
-  --project=<GCP_PROJECT>
-
-# GCP: SA IAMバインディング確認
-gcloud iam service-accounts get-iam-policy \
-  <APP_NAME>@<GCP_PROJECT>.iam.gserviceaccount.com \
-  --project=<GCP_PROJECT>
-```
-
----
-
-## 動作確認
-
-Pod内で以下を実行して認証が動作しているか確認します。
-
-```bash
-# AWS認証確認
-aws sts get-caller-identity
-
-# GCP認証確認（Pythonの場合）
-python -c "from google.auth import default; creds, project = default(); print(f'Project: {project}')"
-```
-
----
-
-## セキュリティ考慮事項
-
-### ConfigMap vs Secret
-
-`gcp-credentials.json` にはシークレットが含まれていないため、ConfigMapで問題ありません。
-
-| ConfigMapの内容 | 機密性 |
-|----------------|-------|
-| audience (Pool URI) | 公開情報 |
-| token_url | 公開情報 |
-| credential_source | 公開情報 |
-| service_account_impersonation_url | 公開情報 |
-
-認証を成功させるには、**AWS IAMロール**へのアクセスが必要であり、これはEKS Pod Identityで保護されています。
-
-### 多層防御
-
-```
-1. EKS Pod Identity: 特定のServiceAccountのみがIAMロールを引き受け可能
-2. AWS IAM Role: Trust Policyでpods.eks.amazonaws.comに制限
-3. GCP WIF attribute_condition: 特定のIAMロールARNのみ許可
-4. GCP IAM: サービスアカウントに最小権限を付与
-```
-
----
-
-## トラブルシューティング
-
-### ロール名の不一致
-
-**症状**: GCP WIFで認証失敗
-
-**確認方法**:
-```bash
-# AWS側の実際のロール名
-aws iam list-roles --query "Roles[?contains(RoleName, '<APP_NAME>')].[RoleName]"
-
-# GCP WIF設定
-gcloud iam workload-identity-pools providers describe aws-eks-provider \
-  --workload-identity-pool=aws-eks-pool-<ENV> \
-  --location=global
-```
-
-### Pool IDの不一致
-
-**症状**: "Invalid audience" エラー
-
-**確認方法**:
-```bash
-# GCP側のPool ID確認
-gcloud iam workload-identity-pools list --location=global --project=<GCP_PROJECT>
-
-# K8s ConfigMap確認
-kubectl get configmap <APP_NAME>-gcp-wif-config -o yaml | grep audience
-```
-
----
-
 ## ローカル開発環境での認証
 
 EKS上ではWorkload Identity Federationを使用しますが、ローカル開発環境ではGCPユーザー認証（ADC: Application Default Credentials）を使用します。
@@ -542,20 +435,136 @@ export async function getAuthInfo(): Promise<{
 }> {
   const auth = new GoogleAuth();
   const client = await auth.getClient();
-  const credentials = await client.getCredentials();
 
+  // クライアントタイプで判別
+  const clientType = client.constructor.name;
+
+  if (clientType === 'ExternalAccountClient') {
+    return { type: 'external_account' };
+  }
+
+  if (clientType === 'UserRefreshClient') {
+    return { type: 'user' };
+  }
+
+  const credentials = await client.getCredentials();
   if ('client_email' in credentials && credentials.client_email) {
-    // サービスアカウントまたはWIF
-    const isWIF = process.env.GOOGLE_APPLICATION_CREDENTIALS?.includes('external_account');
     return {
-      type: isWIF ? 'external_account' : 'service_account',
+      type: 'service_account',
       email: credentials.client_email,
     };
   }
 
-  // ユーザー認証（ADC）
-  return { type: 'user' };
+  return { type: 'unknown' };
 }
+```
+
+---
+
+## 設定の整合性確認
+
+設定完了後、各コンポーネントの整合性を確認します。
+
+### チェックリスト
+
+| 項目 | AWS | GCP | K8s |
+|------|-----|-----|-----|
+| ロール名 | `<APP_NAME>-sa-role-<ENV>` | WIF binding | - |
+| ServiceAccount | Pod Identity | WIF binding末尾 | sa.yaml |
+| Pool ID | - | `aws-eks-pool-<ENV>` | audience |
+| SA Email | - | service_account_bindings | impersonation_url |
+
+### 確認コマンド
+
+```bash
+# AWS: IAMロール確認
+aws iam get-role --role-name <APP_NAME>-sa-role-<ENV>
+
+# AWS: Pod Identity Association確認
+aws eks list-pod-identity-associations --cluster-name <EKS_CLUSTER_NAME>
+
+# GCP: WIF設定確認
+gcloud iam workload-identity-pools providers describe aws-eks-provider \
+  --workload-identity-pool=aws-eks-pool-<ENV> \
+  --location=global \
+  --project=<GCP_PROJECT>
+
+# GCP: SA IAMバインディング確認
+gcloud iam service-accounts get-iam-policy \
+  <APP_NAME>@<GCP_PROJECT>.iam.gserviceaccount.com \
+  --project=<GCP_PROJECT>
+```
+
+---
+
+## 動作確認
+
+Pod内で以下を実行して認証が動作しているか確認します。
+
+```bash
+# AWS認証確認
+aws sts get-caller-identity
+
+# GCP認証確認（TypeScriptの場合）
+npx ts-node -e "import { GoogleAuth } from 'google-auth-library'; new GoogleAuth().getProjectId().then(p => console.log('Project:', p))"
+```
+
+---
+
+## セキュリティ考慮事項
+
+### ConfigMap vs Secret
+
+`gcp-credentials.json` にはシークレットが含まれていないため、ConfigMapで問題ありません。
+
+| ConfigMapの内容 | 機密性 |
+|----------------|-------|
+| audience (Pool URI) | 公開情報 |
+| token_url | 公開情報 |
+| credential_source | 公開情報 |
+| service_account_impersonation_url | 公開情報 |
+
+認証を成功させるには、**AWS IAMロール**へのアクセスが必要であり、これはEKS Pod Identityで保護されています。
+
+### 多層防御
+
+```
+1. EKS Pod Identity: 特定のServiceAccountのみがIAMロールを引き受け可能
+2. AWS IAM Role: Trust Policyでpods.eks.amazonaws.comに制限
+3. GCP WIF attribute_condition: 特定のIAMロールARNのみ許可
+4. GCP IAM: サービスアカウントに最小権限を付与
+```
+
+---
+
+## トラブルシューティング
+
+### ロール名の不一致
+
+**症状**: GCP WIFで認証失敗
+
+**確認方法**:
+```bash
+# AWS側の実際のロール名
+aws iam list-roles --query "Roles[?contains(RoleName, '<APP_NAME>')].[RoleName]"
+
+# GCP WIF設定
+gcloud iam workload-identity-pools providers describe aws-eks-provider \
+  --workload-identity-pool=aws-eks-pool-<ENV> \
+  --location=global
+```
+
+### Pool IDの不一致
+
+**症状**: "Invalid audience" エラー
+
+**確認方法**:
+```bash
+# GCP側のPool ID確認
+gcloud iam workload-identity-pools list --location=global --project=<GCP_PROJECT>
+
+# K8s ConfigMap確認
+kubectl get configmap <APP_NAME>-gcp-wif-config -o yaml | grep audience
 ```
 
 ---
@@ -567,6 +576,7 @@ Workload Identity Federation + EKS Pod Identity を使うことで：
 - **キーレス認証**: サービスアカウントキーの管理が不要
 - **セキュリティ向上**: キー漏洩リスクの排除
 - **運用負担軽減**: キーローテーションが不要
+- **開発体験の統一**: ローカルではADC、EKSではWIFを透過的に切り替え
 
 設定は複数のコンポーネントにまたがるため、**整合性の確認**が重要です。特にロール名やPool IDの一致に注意してください。
 
