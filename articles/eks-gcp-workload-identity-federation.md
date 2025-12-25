@@ -248,7 +248,7 @@ data:
 
 #### 3.3 Deployment
 
-```yaml:overlays/dev/deployment.yaml
+```yaml:deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
