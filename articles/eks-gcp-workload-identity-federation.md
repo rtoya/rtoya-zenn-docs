@@ -3,7 +3,7 @@ title: "AWS EKS から GCP にキーレスでアクセス（Workload Identity Fe
 emoji: "🔐"
 type: "tech"
 topics: ["aws", "gcp", "eks", "kubernetes", "terraform"]
-published: false
+published: true
 ---
 
 ## はじめに
@@ -367,12 +367,12 @@ if (!projectId) {
 // - EKS: GOOGLE_APPLICATION_CREDENTIALS経由でWIFを使用
 const vertexAI = new VertexAI({
   project: projectId,
-  location: 'us-central1',
+  location: '<LOCATION>',
 });
 
 export async function generateContent(prompt: string): Promise<string> {
   const model = vertexAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: '<MODEL_ID>',
   });
 
   const result = await model.generateContent(prompt);
