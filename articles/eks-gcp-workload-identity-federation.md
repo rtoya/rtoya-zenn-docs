@@ -16,18 +16,23 @@ AWS EKS上のアプリケーションからGCPリソース（Vertex AI、BigQuer
 
 ### 認証フロー
 
-```
-EKS Pod
-    ↓ ServiceAccount
-EKS Pod Identity
-    ↓ AWS IAM Role
-AWS STS Token
-    ↓
-GCP Workload Identity Federation
-    ↓ attribute_condition で検証
-GCP Service Account
-    ↓ IAM Role
-GCP API (Vertex AI等)
+```mermaid
+sequenceDiagram
+    participant Pod as EKS Pod
+    participant PI as EKS Pod Identity
+    participant STS as AWS STS
+    participant WIF as GCP Workload Identity Federation
+    participant SA as GCP Service Account
+    participant API as GCP API (Vertex AI等)
+
+    Pod->>PI: 1. ServiceAccountでアクセス
+    PI->>STS: 2. IAM Roleを引き受け
+    STS-->>Pod: 3. AWS STSトークン発行
+    Pod->>WIF: 4. STSトークンで認証要求
+    WIF->>WIF: 5. attribute_conditionで検証
+    WIF->>SA: 6. Service Account として認可
+    SA-->>Pod: 7. GCPアクセストークン発行
+    Pod->>API: 8. APIアクセス
 ```
 
 ### 使用する技術
@@ -77,8 +82,7 @@ AWS EKSでPodにIAMロールを付与する方法は2つあります。
 
 #### 1.1 サービスアカウント作成
 
-```hcl
-# GCPサービスアカウント
+```hcl:gcp_service_account.tf
 resource "google_service_account" "app" {
   account_id   = "<APP_NAME>"
   display_name = "<APP_NAME>"
@@ -96,8 +100,7 @@ resource "google_project_iam_member" "app_aiplatform" {
 
 #### 1.2 Workload Identity Pool / Provider 作成
 
-```hcl
-# Workload Identity Pool
+```hcl:gcp_workload_identity.tf
 resource "google_iam_workload_identity_pool" "aws_eks" {
   workload_identity_pool_id = "aws-eks-pool-<ENV>"
   display_name              = "AWS EKS Pool (<ENV>)"
@@ -136,8 +139,7 @@ resource "google_iam_workload_identity_pool_provider" "aws_eks" {
 
 #### 1.3 サービスアカウントへのバインディング
 
-```hcl
-# WIF → GCP SAのバインディング
+```hcl:gcp_wif_binding.tf
 resource "google_service_account_iam_member" "workload_identity_user" {
   service_account_id = google_service_account.app.name
   role               = "roles/iam.workloadIdentityUser"
@@ -151,8 +153,7 @@ resource "google_service_account_iam_member" "workload_identity_user" {
 
 #### 2.1 IAMロール作成（EKS Pod Identity用）
 
-```hcl
-# EKS Pod Identity用のTrust Policy
+```hcl:aws_iam.tf
 data "aws_iam_policy_document" "app_assume_role" {
   statement {
     effect = "Allow"
@@ -196,8 +197,7 @@ GCP WIFの `aws_role_arn` と AWS IAMロール名が一致している必要が�
 
 #### 3.1 ServiceAccount
 
-```yaml
-# bases/sa.yaml
+```yaml:sa.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -220,8 +220,7 @@ gcloud iam workload-identity-pools create-cred-config \
 
 **ConfigMapとして作成:**
 
-```yaml
-# overlays/<ENV>/gcp-wif-config.yaml
+```yaml:gcp-wif-config.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -249,8 +248,7 @@ data:
 
 #### 3.3 Deployment
 
-```yaml
-# overlays/<ENV>/deployment.yaml
+```yaml:deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
