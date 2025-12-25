@@ -447,11 +447,11 @@ export async function getAuthInfo(): Promise<{
     return { type: 'user' };
   }
 
-  const credentials = await client.getCredentials();
-  if ('client_email' in credentials && credentials.client_email) {
+  // サービスアカウントの場合
+  if ('email' in client && typeof client.email === 'string') {
     return {
       type: 'service_account',
-      email: credentials.client_email,
+      email: client.email,
     };
   }
 
