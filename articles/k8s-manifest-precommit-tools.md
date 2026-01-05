@@ -3,7 +3,7 @@ title: "Kubernetesマニフェスト管理に導入したいpre-commitツール�
 emoji: "🔧"
 type: "tech"
 topics: ["kubernetes", "precommit", "kustomize", "security", "devops"]
-published: false
+published: true
 ---
 
 ## はじめに
