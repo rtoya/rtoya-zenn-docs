@@ -1,0 +1,33 @@
+[tools]
+node = "22"
+pnpm = "latest"
+pre-commit = "latest"
+gitleaks = "latest"
+
+[tasks.preview]
+description = "Zenn プレビューサーバーを起動"
+run = "pnpm preview"
+
+[tasks."new:article"]
+description = "新規記事を作成"
+run = "pnpm new:article"
+
+[tasks."new:book"]
+description = "新規本を作成"
+run = "pnpm new:book"
+
+[tasks.lint]
+description = "pre-commit で全ファイルをチェック"
+run = "pre-commit run --all-files"
+
+[tasks.audit]
+description = "依存関係の脆弱性をチェック"
+run = "pnpm audit"
+
+[tasks.check]
+description = "lockfile との整合性をチェック"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.install]
+description = "依存関係をインストール"
+run = "pnpm install"

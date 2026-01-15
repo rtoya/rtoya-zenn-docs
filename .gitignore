@@ -1,2 +1,13 @@
 node_modules
 .DS_Store
+
+# Shai-Hulud 対策: クレデンシャル漏洩防止
+.env
+.env.*
+*.pem
+*.key
+.npmrc.local
+credentials.json
+**/secrets/
+.aws/
+.gcp/

@@ -6,7 +6,9 @@
   "scripts": {
     "preview": "zenn preview",
     "new:article": "zenn new:article",
-    "new:book": "zenn new:book"
+    "new:book": "zenn new:book",
+    "audit": "pnpm audit",
+    "check:integrity": "pnpm install --frozen-lockfile"
   },
   "keywords": [],
   "author": "",
