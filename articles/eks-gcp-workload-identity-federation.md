@@ -4,6 +4,7 @@ emoji: "🔐"
 type: "tech"
 topics: ["aws", "gcp", "eks", "kubernetes", "terraform"]
 published: true
+publication_name: "atrae"
 ---
 
 ## はじめに

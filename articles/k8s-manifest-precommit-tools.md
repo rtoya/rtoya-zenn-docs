@@ -4,6 +4,7 @@ emoji: "🔧"
 type: "tech"
 topics: ["kubernetes", "precommit", "kustomize", "security", "devops"]
 published: true
+publication_name: "atrae"
 ---
 
 ## はじめに

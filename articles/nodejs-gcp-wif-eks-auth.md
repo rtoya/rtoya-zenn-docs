@@ -4,6 +4,7 @@ emoji: "🔑"
 type: "tech"
 topics: ["langchain", "vertexai", "gcp", "aws", "kubernetes"]
 published: true
+publication_name: "atrae"
 ---
 
 ## はじめに

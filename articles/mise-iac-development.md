@@ -4,6 +4,7 @@ emoji: "🛠️"
 type: "tech"
 topics: ["mise", "terraform", "terragrunt", "precommit", "githubactions"]
 published: true
+publication_name: "atrae"
 ---
 
 この記事は [Qiita GitHub Actions Advent Calendar 2025](https://qiita.com/advent-calendar/2025/github-actions) 22日目の記事です。
