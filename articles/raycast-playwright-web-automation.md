@@ -3,7 +3,7 @@ title: "Raycast + Playwrightで社内Web操作を自動化する"
 emoji: "🎭"
 type: "tech"
 topics: ["raycast", "playwright", "typescript", "mise", "automation"]
-published: false
+published: true
 publication_name: "atrae"
 ---
 
